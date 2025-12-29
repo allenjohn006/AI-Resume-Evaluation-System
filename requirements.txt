@@ -1,0 +1,14 @@
+# Python Dependencies
+# Add your project dependencies here
+fastapi
+uvicorn
+pdfplumber
+numpy
+scikit-learn
+python-dotenv
+streamlit
+requests
+python-multipart
+pytesseract
+pdf2image
+pillow
