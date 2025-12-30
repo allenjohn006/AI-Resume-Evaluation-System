@@ -9,6 +9,10 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 from main import analyze
 
@@ -74,11 +78,14 @@ async def evaluate_resume(
         Evaluation results with match score
     """
     
-    # Validate file types
-    if resume.content_type != "application/pdf":
+    # Validate file types - check both content_type and file extension
+    resume_filename = resume.filename.lower()
+    jd_filename = job_description.filename.lower()
+    
+    if not resume_filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Resume must be a PDF file")
     
-    if job_description.content_type != "application/pdf":
+    if not jd_filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Job description must be a PDF file")
     
     # Validate chunk size
@@ -180,7 +187,8 @@ async def evaluate_batch(
         
         # Process each resume
         for resume in resumes:
-            if resume.content_type != "application/pdf":
+            resume_filename = resume.filename.lower()
+            if not resume_filename.endswith('.pdf'):
                 results.append({
                     "filename": resume.filename,
                     "success": False,

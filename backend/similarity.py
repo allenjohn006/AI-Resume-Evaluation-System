@@ -76,6 +76,19 @@ class SimilarityCalculator:
         else:
             raise ValueError(f"Unknown similarity metric: {self.similarity_metric}")
     
+    def compute_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
+        """
+        Alias for calculate_similarity for compatibility
+        
+        Args:
+            vec1: First vector
+            vec2: Second vector
+            
+        Returns:
+            Similarity score
+        """
+        return self.calculate_similarity(vec1, vec2)
+    
     def find_most_similar(self, query_vec: np.ndarray, 
                          candidate_vecs: List[np.ndarray], 
                          top_k: int = 5) -> List[Tuple[int, float]]:

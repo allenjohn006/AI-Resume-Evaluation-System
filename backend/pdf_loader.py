@@ -6,6 +6,7 @@ import pdfplumber
 from pdf2image import convert_from_path
 import pytesseract
 from PIL import Image
+import os
 
 
 class PDFLoader:
@@ -41,18 +42,11 @@ class PDFLoader:
         
         # If very little text extracted, use OCR
         if len(text.strip()) < 100:  # Threshold for "empty" PDF
-            print(f"Using OCR for image-based PDF: {pdf_path}")
-            try:
-                images = convert_from_path(pdf_path)
-                text = ""
-                for i, image in enumerate(images):
-                    print(f"Processing page {i + 1} with OCR...")
-                    page_text = pytesseract.image_to_string(image)
-                    if page_text:
-                        text += page_text + "\n"
-            except Exception as e:
-                print(f"Error with OCR: {e}")
-                raise
+            print(f"OCR fallback for image-based PDF: {pdf_path}")
+            POPPLER_PATH = os.getenv("POPPLER_PATH")
+            images = convert_from_path(pdf_path, poppler_path=POPPLER_PATH)
+            for image in images:
+                text += pytesseract.image_to_string(image) + "\n"
         
         if not text.strip():
             raise ValueError(f"No text could be extracted from PDF: {pdf_path}")

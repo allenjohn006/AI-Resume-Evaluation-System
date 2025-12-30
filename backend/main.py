@@ -35,7 +35,7 @@ def analyze(
     """
     # Initialize components
     pdf_loader = PDFLoader()
-    chunker = TextChunker()
+    chunker = TextChunker(chunk_size=chunk_size)
     embedding_gen = EmbeddingGenerator()
     similarity_calc = SimilarityCalculator()
     
@@ -44,8 +44,8 @@ def analyze(
     jd_text = pdf_loader.load_pdf(jd_pdf)
 
     # 2) Chunk text
-    resume_chunks = chunker.chunk_text(resume_text, chunk_size=chunk_size)
-    jd_chunks = chunker.chunk_text(jd_text, chunk_size=chunk_size)
+    resume_chunks = chunker.chunk_text(resume_text)
+    jd_chunks = chunker.chunk_text(jd_text)
 
     if not resume_chunks or not jd_chunks:
         raise ValueError("No text chunks were produced from one or both PDFs.")
