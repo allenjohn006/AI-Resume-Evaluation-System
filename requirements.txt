@@ -12,3 +12,4 @@ python-multipart
 pytesseract
 pdf2image
 pillow
+faiss-cpu

@@ -1,25 +1,29 @@
 """
-FastAPI backend for the AI Resume Evaluation System
+FastAPI backend for the AI Resume Evaluation System with RAG integration
 """
 
 import os
-import shutil
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import uvicorn
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 from main import analyze
+from embeddings import EmbeddingGenerator
+from chunker import TextChunker
+from pdf_loader import PDFLoader
+from rag.vector_store import VectorStore
+from rag.rag_pipeline import RAGPipeline
+from llm import call_llm
 
 
 app = FastAPI(
     title="AI Resume Evaluation System API",
-    description="API for evaluating resume match with job descriptions",
+    description="API for evaluating resume match with job descriptions using RAG",
     version="1.0.0"
 )
 
@@ -36,12 +40,17 @@ app.add_middleware(
 TEMP_DIR = Path("temp_uploads")
 TEMP_DIR.mkdir(exist_ok=True)
 
+# Initialize components
+pdf_loader = PDFLoader()
+chunker = TextChunker()
+embedding_gen = EmbeddingGenerator()
+
 
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
-        "message": "AI Resume Evaluation System API",
+        "message": "AI Resume Evaluation System API with RAG",
         "version": "1.0.0",
         "endpoints": {
             "health": "/health",
@@ -64,28 +73,27 @@ async def health_check():
 async def evaluate_resume(
     resume: UploadFile = File(..., description="Resume PDF file"),
     job_description: UploadFile = File(..., description="Job Description PDF file"),
-    chunk_size: int = Form(default=500, description="Number of words per chunk")
+    chunk_size: int = Form(default=500, description="Number of words per chunk"),
+    use_rag: bool = Form(default=True, description="Enable RAG evaluation")
 ):
     """
-    Evaluate how well a resume matches a job description
+    Evaluate resume match with job description using semantic similarity and optional RAG
     
     Args:
         resume: Resume PDF file
         job_description: Job Description PDF file
         chunk_size: Number of words per chunk (default: 500)
+        use_rag: Enable RAG-based evaluation (default: True)
     
     Returns:
-        Evaluation results with match score
+        Evaluation results with match score and RAG insights
     """
     
-    # Validate file types - check both content_type and file extension
-    resume_filename = resume.filename.lower()
-    jd_filename = job_description.filename.lower()
-    
-    if not resume_filename.endswith('.pdf'):
+    # Validate file types
+    if resume.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Resume must be a PDF file")
     
-    if not jd_filename.endswith('.pdf'):
+    if job_description.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Job description must be a PDF file")
     
     # Validate chunk size
@@ -96,11 +104,10 @@ async def evaluate_resume(
     jd_path = None
     
     try:
-        # Save uploaded files temporarily
+        # Step 1: Save uploaded files temporarily
         resume_path = TEMP_DIR / f"resume_{resume.filename}"
         jd_path = TEMP_DIR / f"jd_{job_description.filename}"
         
-        # Write files
         with open(resume_path, "wb") as f:
             content = await resume.read()
             f.write(content)
@@ -109,36 +116,91 @@ async def evaluate_resume(
             content = await job_description.read()
             f.write(content)
         
-        # Run analysis
-        score = analyze(
+        # Step 2: Extract text from PDFs
+        resume_text = pdf_loader.load_pdf(str(resume_path))
+        jd_text = pdf_loader.load_pdf(str(jd_path))
+        
+        # Step 3: Chunk the text
+        resume_chunks = chunker.chunk_text(resume_text, chunk_size=chunk_size)
+        jd_chunks = chunker.chunk_text(jd_text, chunk_size=chunk_size)
+        
+        if not resume_chunks or not jd_chunks:
+            raise ValueError("No text chunks were produced from one or both PDFs.")
+        
+        # Step 4: Generate embeddings
+        resume_embeddings = embedding_gen.generate_embeddings_batch(resume_chunks)
+        jd_embeddings = embedding_gen.generate_embeddings_batch(jd_chunks)
+        
+        # Step 5: Run semantic similarity scoring
+        similarity_score = analyze(
             str(resume_path),
             str(jd_path),
             chunk_size=chunk_size
         )
         
         # Determine match level
-        if score >= 0.75:
+        if similarity_score >= 0.75:
             match_level = "Excellent"
-        elif score >= 0.50:
+        elif similarity_score >= 0.50:
             match_level = "Good"
         else:
             match_level = "Needs Improvement"
         
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "score": float(score),
-                "score_percentage": f"{score * 100:.2f}%",
-                "match_level": match_level,
-                "analysis": {
-                    "raw_score": float(score),
-                    "percentage": score * 100,
-                    "chunk_size": chunk_size
-                },
-                "interpretation": get_interpretation(score)
+        result = {
+            "success": True,
+            "score": float(similarity_score),
+            "score_percentage": f"{similarity_score * 100:.2f}%",
+            "match_level": match_level,
+            "analysis": {
+                "raw_score": float(similarity_score),
+                "percentage": similarity_score * 100,
+                "chunk_size": chunk_size,
+                "resume_chunks_count": len(resume_chunks),
+                "jd_chunks_count": len(jd_chunks)
+            },
+            "interpretation": get_interpretation(similarity_score)
+        }
+        
+        # Step 6: Run RAG pipeline if enabled
+        if use_rag:
+            try:
+                # Create vector stores
+                embedding_dim = len(resume_embeddings[0]) if resume_embeddings else 384
+                resume_store = VectorStore(dim=embedding_dim, use_faiss=True)
+                jd_store = VectorStore(dim=embedding_dim, use_faiss=True)
+                
+                # Add embeddings to stores
+                resume_store.add(resume_embeddings, resume_chunks)
+                jd_store.add(jd_embeddings, jd_chunks)
+                
+                # Run RAG pipeline
+                rag_pipeline = RAGPipeline(resume_store, jd_store, top_k=5)
+                rag_result = rag_pipeline.run()
+                
+                # Call LLM for detailed evaluation
+                llm_response = call_llm(rag_result["prompt"])
+                
+                result["rag_evaluation"] = {
+                    "enabled": True,
+                    "llm_response": llm_response,
+                    "retrieved_resume_chunks": rag_result["resume_chunks"],
+                    "retrieved_jd_chunks": rag_result["jd_chunks"],
+                    "resume_relevance_scores": rag_result["resume_scores"],
+                    "jd_relevance_scores": rag_result["jd_scores"]
+                }
+            except Exception as e:
+                result["rag_evaluation"] = {
+                    "enabled": False,
+                    "error": f"RAG pipeline error: {str(e)}",
+                    "note": "Falling back to similarity-based evaluation"
+                }
+        else:
+            result["rag_evaluation"] = {
+                "enabled": False,
+                "note": "RAG evaluation disabled"
             }
-        )
+        
+        return JSONResponse(status_code=200, content=result)
     
     except Exception as e:
         raise HTTPException(
@@ -150,94 +212,6 @@ async def evaluate_resume(
         # Clean up temporary files
         if resume_path and resume_path.exists():
             resume_path.unlink()
-        if jd_path and jd_path.exists():
-            jd_path.unlink()
-
-
-@app.post("/evaluate-batch")
-async def evaluate_batch(
-    resumes: list[UploadFile] = File(..., description="List of resume PDF files"),
-    job_description: UploadFile = File(..., description="Job Description PDF file"),
-    chunk_size: int = Form(default=500, description="Number of words per chunk")
-):
-    """
-    Evaluate multiple resumes against a single job description
-    
-    Args:
-        resumes: List of resume PDF files
-        job_description: Job Description PDF file
-        chunk_size: Number of words per chunk
-    
-    Returns:
-        List of evaluation results
-    """
-    
-    if job_description.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Job description must be a PDF file")
-    
-    jd_path = None
-    results = []
-    
-    try:
-        # Save job description
-        jd_path = TEMP_DIR / f"jd_{job_description.filename}"
-        with open(jd_path, "wb") as f:
-            content = await job_description.read()
-            f.write(content)
-        
-        # Process each resume
-        for resume in resumes:
-            resume_filename = resume.filename.lower()
-            if not resume_filename.endswith('.pdf'):
-                results.append({
-                    "filename": resume.filename,
-                    "success": False,
-                    "error": "File must be a PDF"
-                })
-                continue
-            
-            resume_path = None
-            
-            try:
-                resume_path = TEMP_DIR / f"resume_{resume.filename}"
-                with open(resume_path, "wb") as f:
-                    content = await resume.read()
-                    f.write(content)
-                
-                score = analyze(str(resume_path), str(jd_path), chunk_size=chunk_size)
-                
-                results.append({
-                    "filename": resume.filename,
-                    "success": True,
-                    "score": float(score),
-                    "score_percentage": f"{score * 100:.2f}%",
-                    "match_level": "Excellent" if score >= 0.75 else "Good" if score >= 0.50 else "Needs Improvement"
-                })
-            
-            except Exception as e:
-                results.append({
-                    "filename": resume.filename,
-                    "success": False,
-                    "error": str(e)
-                })
-            
-            finally:
-                if resume_path and resume_path.exists():
-                    resume_path.unlink()
-        
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "total": len(resumes),
-                "results": results
-            }
-        )
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
-    
-    finally:
         if jd_path and jd_path.exists():
             jd_path.unlink()
 
@@ -288,8 +262,9 @@ def get_interpretation(score: float) -> dict:
 
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(
-        "api:app",  # Changed from app to "api:app" import string
+        "api:app",
         host="0.0.0.0",
         port=8000,
         reload=True
