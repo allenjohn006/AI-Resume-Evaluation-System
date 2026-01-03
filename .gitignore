@@ -46,3 +46,5 @@ data/*.csv
 data/*.json
 data/*.pdf
 !data/.gitkeep
+
+temp_uploads/
