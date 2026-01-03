@@ -102,19 +102,19 @@ AI_RESUME_EVALUATION_SYSTEM/
 ## 📸 Screenshots
 
 ### User Interface
-![UI Overview](images/UI.png)
+![UI Overview](Images/UI.png)
 *Clean and intuitive Streamlit interface with sidebar settings*
 
 ### Evaluation Dashboard
-![Evaluation Results](images/evaluation.png)
+![Evaluation Results](Images/evaluation.png)
 *Real-time evaluation with match percentage and recommendations*
 
 ### Match Score Results
-![Score Results](images/result.png)
+![Score Results](Images/result.png)
 *Detailed results display with interpretation and actionable insights*
 
 ### RAG Retrieved Context
-![Retrieved Context](images/retrieved_context.png)
+![Retrieved Context](Images/retrieved_context.png)
 *Relevant resume and job description chunks retrieved by RAG pipeline*
 
 ---
